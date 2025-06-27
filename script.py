@@ -543,7 +543,7 @@ class PowerPointGenerator:
             
             slide.shapes.title.text = title
             if len(slide.placeholders) > 1:
-                slide.placeholders[1].text = f"Generated from ChatGPT Canvas\n{time.strftime('%Y-%m-%d %H:%M')}"
+                slide.placeholders[1].text = f" "
             
             self.slide_count += 1
         except Exception as e:
@@ -562,26 +562,36 @@ class PowerPointGenerator:
         ], recursive=True)
         
         code_buffer = []
-
+        processed_elements = set()  # Track processed elements to avoid duplicates
+    
         for element in elements:
+            # Skip if already processed
+            element_id = id(element)
+            if element_id in processed_elements:
+                continue
+                
             element_text = element.get_text(strip=True)
+            
+            # Handle speaker notes
             if "Speaker notes:" in element_text:
                 content_part, notes_part = re.split(r'Speaker notes\s*:\s*', element_text, flags=re.IGNORECASE, maxsplit=1)
-
+    
                 # If we have a current slide, add notes to it
                 if current_slide is not None:
                     slide = current_slide
                     notes_slide = slide.notes_slide
                     notes_slide.notes_text_frame.text = notes_part.strip()
                 
-                # Continue processing the content part if it exists
+                # Mark as processed and continue with content part if it exists
+                processed_elements.add(element_id)
                 if content_part.strip():
-                    # You might want to create a new element with just the content part
-                    # For now, we'll skip this element entirely after extracting notes
+                    # Create a new element with just the content part for further processing
+                    # But for now, we'll skip this element entirely after extracting notes
                     continue
                 else:
                     continue
-
+    
+            # Handle image descriptions
             if "image:" in element_text.lower():
                 content_part, image_part = re.split(r'image\s*:\s*', element_text, flags=re.IGNORECASE, maxsplit=1)
                 
@@ -592,18 +602,24 @@ class PowerPointGenerator:
                         'description': image_part.strip()
                     })
                 
+                # Mark as processed
+                processed_elements.add(element_id)
+                
                 # Continue processing the content part if it exists
                 if content_part.strip():
-                    # Process the content part normally
+                    # For now, skip further processing to avoid duplication
+                    # You could create a new element here if needed
                     continue
                 else:
                     continue
-             # Handle consecutive cm-line blocks as one code block
+    
+            # Handle consecutive cm-line blocks as one code block
             if element.name == "div" and "cm-line" in element.get("class", []):
                 print(f"[DEBUG] Detected cm-line: {element.get_text(strip=True)}")
                 code_text = element.get_text(strip=True)
                 if code_text:
                     code_buffer.append(code_text)
+                processed_elements.add(element_id)
                 continue
             
             # If the current element is NOT a cm-line AND we have code buffered, flush it
@@ -612,32 +628,24 @@ class PowerPointGenerator:
                 self._add_code_content(content_box, "\n".join(code_buffer))
                 code_buffer = []
             
-            # Skip <p>, <span> if inside a list item — they are handled inside _process_list_recursive
+            # Skip elements that are part of other elements to avoid duplication
             if element.name in ["p", "span"] and element.find_parents(["ul", "ol", "li"]):
+                processed_elements.add(element_id)
                 continue
             
-            # Skip <p> that is already part of a list item
             if element.name == "p" and element.find_parent("li"):
+                processed_elements.add(element_id)
                 continue
             
-            # Skip <span> if it's inside a paragraph or list item (usually inline)
             if element.name == "span" and (element.find_parent("p") or element.find_parent("li")):
+                processed_elements.add(element_id)
                 continue
-
-
-            
+    
             # Skip <code> if it's inside a <pre>
             if element.name == "code" and element.find_parent("pre"):
+                processed_elements.add(element_id)
                 continue
-            
-            
-
-            # Handle CodeMirror-style code lines without creating a new slide
-            # if element.name == "div" and "cm-line" in element.get("class", []):
-            #     current_slide, content_box = self._ensure_slide(prs, current_slide, "Content")  # Stay on same slide
-            #     self._add_code_content(content_box, element.get_text(strip=True))  # Pass raw code text
-            #     continue
-
+    
             try:
                 element_type = element.name
                 
@@ -645,48 +653,37 @@ class PowerPointGenerator:
                 if element_type in ["h1", "h2", "h3", "h4", "h5", "h6"]:
                     current_slide, content_box = self._add_content_slide(prs, element.get_text(strip=True))
                 
-                # Handle paragraphs
-                #elif element_type == "p":
-                    #current_slide, content_box = self._ensure_slide(prs, current_slide, "Content")
-                    #self._add_paragraph_content(content_box, element)
-                
                 # Handle lists
-                
+                elif element_type in ["ol", "ul"] and not element.find_parent(["ul", "ol"]):
+                    current_slide, content_box = self._ensure_slide(prs, current_slide, "List")
+                    self._add_list_content(content_box, element)
+                    processed_elements.add(element_id)
+                    continue
                 
                 # Handle tables
                 elif element_type == "table":
                    current_slide, content_box = self._ensure_slide(prs, current_slide, "Content")
                    self._add_table_to_slide(current_slide, element)
+                   processed_elements.add(element_id)
                    continue
-
                 
                 # Handle code blocks
                 elif element_type in ["pre", "code"]:
                     current_slide, content_box = self._ensure_slide(prs, current_slide, "Code")
                     self._add_code_content(content_box, element)
                 
-                # # Handle blockquotes
-                # elif element_type == "blockquote":
-                #     current_slide, content_box = self._ensure_slide(prs, current_slide, "Quote")
-                #     self._add_quote_content(content_box, element)
-                
-                # Handle mathematical expressions
-                #elif element_type == "span" and self._is_math_element(element):
-                    #current_slide, content_box = self._ensure_slide(prs, current_slide, "Formula")
-                    # self._add_math_content(content_box, element)
-                elif element_type in ["ol", "ul"] and not element.find_parent(["ul", "ol"]):
-                    current_slide, content_box = self._ensure_slide(prs, current_slide, "List")
-                    self._add_list_content(content_box, element)
-                    continue
-                
-                
+                # Mark as processed
+                processed_elements.add(element_id)
+                    
             except Exception as e:
                 self.logger.warning(f"Failed to process element {element_type}: {e}")
+                processed_elements.add(element_id)
                 continue
-        if code_buffer:
-            current_slide, content_box = self._ensure_slide(prs, current_slide, "Content")
-            self._add_code_content(content_box, "\n".join(code_buffer))
-            code_buffer = []
+            
+            # Handle any remaining code buffer
+            if code_buffer:
+                current_slide, content_box = self._ensure_slide(prs, current_slide, "Content")
+                self._add_code_content(content_box, "\n".join(code_buffer))
 
     def _add_content_slide(self, prs: Presentation, title: str) -> Tuple[Any, Any]:
         """Add a new content slide"""
@@ -966,8 +963,8 @@ class PowerPointGenerator:
         try:
             doc = Document()
             doc.add_heading('Image Descriptions', 0)
-            doc.add_paragraph(f'Generated from PowerPoint: {ppt_path.name}')
-            doc.add_paragraph(f'Created on: {time.strftime("%Y-%m-%d %H:%M:%S")}')
+            # doc.add_paragraph(f'Generated from PowerPoint: {ppt_path.name}')
+            # doc.add_paragraph(f'Created on: {time.strftime("%Y-%m-%d %H:%M:%S")}')
             doc.add_paragraph('')  # Empty line
             
             for img_info in self.image_descriptions:
