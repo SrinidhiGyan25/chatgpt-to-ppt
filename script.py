@@ -498,6 +498,7 @@ class PowerPointGenerator:
     
     def __init__(self, config: Config, logger: logging.Logger):
         self.speaker_notes = []
+        self.image_descriptions = []  # ADD THIS LINE
         self.config = config
         self.logger = logger
         self.slide_count = 0
@@ -522,8 +523,10 @@ class PowerPointGenerator:
             
             # Save with error handling
             self._save_presentation(prs, output_path)
-            
-            
+
+            if self.image_descriptions:
+                self._create_image_document(output_path)
+
             self.logger.info(f"✅ PowerPoint created with {len(prs.slides)} slides: {output_path}")
             
             return True
@@ -562,9 +565,9 @@ class PowerPointGenerator:
 
         for element in elements:
             element_text = element.get_text(strip=True)
-            if "speaker notes:" in element_text.lower():
-                content_part, notes_part = re.split(r'speaker notes\s*:\s*', element_text, flags=re.IGNORECASE, maxsplit=1)
-                
+            if "Speaker notes:" in element_text:
+                content_part, notes_part = re.split(r'Speaker notes\s*:\s*', element_text, flags=re.IGNORECASE, maxsplit=1)
+
                 # If we have a current slide, add notes to it
                 if current_slide is not None:
                     slide = current_slide
@@ -575,6 +578,23 @@ class PowerPointGenerator:
                 if content_part.strip():
                     # You might want to create a new element with just the content part
                     # For now, we'll skip this element entirely after extracting notes
+                    continue
+                else:
+                    continue
+
+            if "image:" in element_text.lower():
+                content_part, image_part = re.split(r'image\s*:\s*', element_text, flags=re.IGNORECASE, maxsplit=1)
+                
+                # Store image description with current slide number
+                if image_part.strip():
+                    self.image_descriptions.append({
+                        'slide_number': self.slide_count + 1,  # Next slide number
+                        'description': image_part.strip()
+                    })
+                
+                # Continue processing the content part if it exists
+                if content_part.strip():
+                    # Process the content part normally
                     continue
                 else:
                     continue
@@ -941,7 +961,31 @@ class PowerPointGenerator:
         except OSError as e:
             raise IOError(f"File system error: {e}")
     
-
+    def _create_image_document(self, ppt_path: Path) -> None:
+        """Create a Word document with image descriptions"""
+        try:
+            doc = Document()
+            doc.add_heading('Image Descriptions', 0)
+            doc.add_paragraph(f'Generated from PowerPoint: {ppt_path.name}')
+            doc.add_paragraph(f'Created on: {time.strftime("%Y-%m-%d %H:%M:%S")}')
+            doc.add_paragraph('')  # Empty line
+            
+            for img_info in self.image_descriptions:
+                # Add slide number as heading
+                doc.add_heading(f'Slide {img_info["slide_number"]}', level=1)
+                # Add image description
+                doc.add_paragraph(img_info['description'])
+                doc.add_paragraph('')  # Empty line between entries
+            
+            # Save document with same name as PowerPoint but .docx extension
+            doc_path = ppt_path.with_suffix('.docx')
+            doc_path = SafeFilename.ensure_unique(doc_path)
+            doc.save(str(doc_path))
+            
+            self.logger.info(f"📄 Image descriptions document created: {doc_path}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to create image descriptions document: {e}")
     
     
 class CanvasConverter:
