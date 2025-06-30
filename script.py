@@ -594,13 +594,16 @@ class PowerPointGenerator:
             # Handle image descriptions
             if "image:" in element_text.lower():
                 content_part, image_part = re.split(r'image\s*:\s*', element_text, flags=re.IGNORECASE, maxsplit=1)
-                
-                # Store image description with current slide number
+
+                # Store image description with current slide number if unique
                 if image_part.strip():
-                    self.image_descriptions.append({
-                        'slide_number': self.slide_count + 1,  # Next slide number
-                        'description': image_part.strip()
-                    })
+                    desc = image_part.strip()
+                    slide_no = self.slide_count + 1
+                    if not any(d['slide_number'] == slide_no and d['description'] == desc for d in self.image_descriptions):
+                        self.image_descriptions.append({
+                            'slide_number': slide_no,  # Next slide number
+                            'description': desc
+                        })
                 
                 # Mark as processed
                 processed_elements.add(element_id)
@@ -967,7 +970,15 @@ class PowerPointGenerator:
             # doc.add_paragraph(f'Created on: {time.strftime("%Y-%m-%d %H:%M:%S")}')
             doc.add_paragraph('')  # Empty line
             
+            seen = set()
+            unique_descriptions = []
             for img_info in self.image_descriptions:
+                key = (img_info.get('slide_number'), img_info.get('description'))
+                if key not in seen:
+                    seen.add(key)
+                    unique_descriptions.append(img_info)
+
+            for img_info in unique_descriptions:
                 # Add slide number as heading
                 doc.add_heading(f'Slide {img_info["slide_number"]}', level=1)
                 # Add image description
